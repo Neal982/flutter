@@ -26,7 +26,12 @@ class TestCompilerNativeAssetsBuilderImpl implements TestCompilerNativeAssetsBui
   const TestCompilerNativeAssetsBuilderImpl();
 
   @override
-  Future<Uri?> build(BuildInfo buildInfo) => testCompilerBuildNativeAssets(buildInfo);
+  Future<Uri?> build(BuildInfo buildInfo) async =>
+      (await buildWithHookResult(buildInfo)).nativeAssetsManifest;
+
+  @override
+  Future<TestCompilerNativeAssetsBuildResult> buildWithHookResult(BuildInfo buildInfo) =>
+      testCompilerBuildNativeAssets(buildInfo);
 
   @override
   String windowsBuildDirectory(FlutterProject project) {
@@ -41,10 +46,20 @@ class TestCompilerNativeAssetsBuilderImpl implements TestCompilerNativeAssetsBui
 /// and install hooks for the host test platform ([TargetPlatform.tester]),
 /// writing the generated manifest to `build/native_assets/<os>/native_assets.json`.
 ///
+<<<<<<< HEAD
 /// Returns the [Uri] to the generated `native_assets.json` file, or `null` if
 /// native assets are disabled, unsupported on the host OS, or no package can
 /// be resolved.
 Future<Uri?> testCompilerBuildNativeAssets(BuildInfo buildInfo) async {
+=======
+/// Returns the [TestCompilerNativeAssetsBuildResult] containing the [Uri] to the
+/// generated `native_assets.json` file and hook output, or `null` fields if
+/// native assets are disabled, unsupported on the host OS, or no package can
+/// be resolved.
+Future<TestCompilerNativeAssetsBuildResult> testCompilerBuildNativeAssets(
+  BuildInfo buildInfo,
+) async {
+>>>>>>> ab2912035e160d9cad6306df307576da6128ebdb
   final BuildInfo(
     :bool buildNativeAssets,
     :BuildMode mode,
@@ -52,6 +67,7 @@ Future<Uri?> testCompilerBuildNativeAssets(BuildInfo buildInfo) async {
     :String packageConfigPath,
   ) = buildInfo;
   if (!buildNativeAssets) {
+<<<<<<< HEAD
     return null;
   }
   final FlutterProject project = FlutterProject.current();
@@ -72,11 +88,34 @@ Future<Uri?> testCompilerBuildNativeAssets(BuildInfo buildInfo) async {
   final String pubspecPath = Uri.file(
     packageConfigPath,
   ).resolve('../$_pubspecYamlFileName').toFilePath();
+=======
+    return (nativeAssetsManifest: null, flutterHookResult: null);
+  }
+  final FlutterProject project = FlutterProject.current();
+  final Uri projectUri = project.directory.uri;
+  final String? runPackageName = findRunPackageName(
+    fileSystem: project.directory.fileSystem,
+    manifestAppName: project.manifest.appName,
+    packageConfig: packageConfig,
+    projectUri: projectUri,
+  );
+  if (runPackageName == null) {
+    globals.logger.printWarning(
+      'Could not determine run package name for native assets testing '
+      '(projectUri: $projectUri, packageConfigPath: $packageConfigPath).',
+    );
+    return (nativeAssetsManifest: null, flutterHookResult: null);
+  }
+  final String pubspecPath = Uri.file(packageConfigPath)
+      .resolve('../$_pubspecYamlFileName')
+      .toFilePath();
+>>>>>>> ab2912035e160d9cad6306df307576da6128ebdb
   final FlutterNativeAssetsBuildRunner buildRunner = FlutterNativeAssetsBuildRunnerImpl(
     packageConfigPath,
     packageConfig,
     globals.fs,
     globals.logger,
+    globals.platform,
     runPackageName,
     pubspecPath,
     includeDevDependencies: true,
@@ -89,7 +128,7 @@ Future<Uri?> testCompilerBuildNativeAssets(BuildInfo buildInfo) async {
       globals.fs,
       buildRunner,
     );
-    return null;
+    return (nativeAssetsManifest: null, flutterHookResult: null);
   }
 
   // Only `flutter test` uses the
@@ -130,7 +169,69 @@ Future<Uri?> testCompilerBuildNativeAssets(BuildInfo buildInfo) async {
   );
   assert(globals.fs.file(nativeAssetsFileUri).existsSync());
 
-  return nativeAssetsFileUri;
+  return (
+    nativeAssetsManifest: nativeAssetsFileUri,
+    flutterHookResult: dartHookResult.asFlutterResult,
+  );
+}
+
+/// Resolves the target package name for native assets builds using the following
+/// fallback order:
+///
+/// 1. A package in [packageConfig] whose `root` URI directly matches [projectUri].
+/// 2. A package in [packageConfig] whose canonicalized `root` path matches the
+///    canonicalized path of [projectUri] (handling symlinks and trailing slashes).
+/// 3. [manifestAppName] if it is non-empty and exists in [packageConfig].
+/// 4. `null` if no package name can be determined.
+@visibleForTesting
+String? findRunPackageName({
+  required FileSystem fileSystem,
+  required String manifestAppName,
+  required PackageConfig packageConfig,
+  required Uri projectUri,
+}) {
+  // 1. Direct match on package root URI.
+  final Package? directMatch = packageConfig.packages
+      .where((Package p) => p.root == projectUri)
+      .firstOrNull;
+  if (directMatch != null) {
+    return directMatch.name;
+  }
+
+  // 2. Canonicalized path match (handles symlinks, trailing slashes, etc.).
+  if (projectUri.isScheme(_fileScheme) && packageConfig.packages.isNotEmpty) {
+    final String canonicalProjectDir = _canonicalizeUriPath(fileSystem, projectUri);
+    final Package? pathMatch = packageConfig.packages.where((Package p) {
+      if (!p.root.isScheme(_fileScheme)) {
+        return false;
+      }
+      return _canonicalizeUriPath(fileSystem, p.root) == canonicalProjectDir;
+    }).firstOrNull;
+    if (pathMatch != null) {
+      return pathMatch.name;
+    }
+  }
+
+  // 3. Fallback to the project manifest app name if it exists in packageConfig.
+  if (manifestAppName.isNotEmpty && packageConfig[manifestAppName] != null) {
+    return manifestAppName;
+  }
+
+  return null;
+}
+
+String _canonicalizeUriPath(FileSystem fileSystem, Uri uri) {
+  final String path = fileSystem.path.fromUri(uri);
+  final Directory directory = fileSystem.directory(path);
+  var resolvedPath = path;
+  if (directory.existsSync()) {
+    try {
+      resolvedPath = directory.resolveSymbolicLinksSync();
+    } on FileSystemException {
+      // Fall back to the unresolved path if symlink resolution fails.
+    }
+  }
+  return fileSystem.path.canonicalize(resolvedPath);
 }
 
 /// Resolves the target package name for native assets builds using the following
